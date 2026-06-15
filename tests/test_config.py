@@ -5,7 +5,8 @@ def test_settings_paths(settings):
     assert settings.workspace.name == "ws"
     assert settings.queue_db.parent == settings.workspace
     assert settings.authored_tools_dir.name == "authored_tools"
-    assert settings.model  # non-empty default
+    assert settings.agent_name  # non-empty default
+    assert settings.embedding_backend == "hashing"  # free default
 
 
 def test_env_roundtrip(tmp_path, monkeypatch):
@@ -15,7 +16,6 @@ def test_env_roundtrip(tmp_path, monkeypatch):
     import os
 
     assert os.environ["FOO_BAR"] == "123"
-    # update existing key in place
     set_env_var("FOO_BAR", "456", root=tmp_path)
     text = (tmp_path / ".env").read_text()
     assert "FOO_BAR=456" in text and "FOO_BAR=123" not in text

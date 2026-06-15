@@ -1,4 +1,9 @@
-"""Supervisor: run worker + scheduler + Telegram bot with restart-on-crash."""
+"""Supervisor for the sentinel: Telegram receiver + cron ticker, restart-on-crash.
+
+This is the deterministic, always-on layer — the part you keep running as a daemon
+(systemd / nohup). It contains no LLM and never blocks on the brain. Claude Code
+drains what it enqueues.
+"""
 
 from __future__ import annotations
 
@@ -8,13 +13,11 @@ import time
 from scion.config import get_settings
 from scion.logging import get_logger
 from scion.scheduler.cron import get_scheduler
-from scion.scheduler.worker import Worker
 
 log = get_logger("scheduler.supervisor")
 
 
 def _supervise(name: str, fn) -> None:
-    """Run *fn* forever, restarting on crash with capped backoff."""
     backoff = 2
     while True:
         try:
@@ -30,33 +33,30 @@ def _supervise(name: str, fn) -> None:
 
 
 def _thread(name: str, fn) -> threading.Thread:
-    t = threading.Thread(target=_supervise, args=(name, fn), name=name, daemon=True)
-    return t
+    return threading.Thread(target=_supervise, args=(name, fn), name=name, daemon=True)
 
 
-def serve(*, bot: bool = True, worker: bool = True, scheduler: bool = True) -> None:
-    """Start the autonomy stack. Blocks (Ctrl-C to stop)."""
+def run_sentinel(*, telegram: bool = True, cron: bool = True) -> None:
+    """Run the always-on deterministic layer. Blocks (Ctrl-C to stop)."""
     s = get_settings()
-    have_bot = bot and bool(s.telegram_bot_token)
+    have_tg = telegram and bool(s.telegram_bot_token)
 
     background: list[threading.Thread] = []
-    if scheduler:
-        background.append(_thread("scheduler", lambda: get_scheduler().run()))
-    if worker and have_bot:
-        # bot takes the foreground; worker runs behind it
-        background.append(_thread("worker", lambda: Worker(s).run()))
+    if cron:
+        background.append(_thread("cron", lambda: get_scheduler().run()))
     for t in background:
         t.start()
 
     try:
-        if have_bot:
-            from scion.channels.telegram import TelegramBot
+        if have_tg:
+            from scion.channels.telegram import TelegramReceiver
 
-            _supervise("telegram-bot", lambda: TelegramBot(s).run())
-        elif worker:
-            _supervise("worker", lambda: Worker(s).run())
-        else:
+            _supervise("telegram-receiver", lambda: TelegramReceiver(s).run())
+        elif cron:
+            # nothing to keep the foreground busy besides cron (already threaded)
             while True:
                 time.sleep(3600)
+        else:
+            log.warning("sentinel started with nothing to do (no telegram, no cron)")
     except KeyboardInterrupt:
-        log.info("shutting down")
+        log.info("sentinel shutting down")

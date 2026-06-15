@@ -116,29 +116,13 @@ class MemoryStore:
         return [(name, line) for _, name, line in candidates[:limit]]
 
     # ---- consolidation (dreaming) ---------------------------------------- #
-    def recent_journal(self, days: int = 1) -> str:
+    def recent_journal(self, days: int = 2) -> str:
+        """Recent episodic notes — Claude Code reads these to consolidate into
+        durable MEMORY itself (no LLM API call needed)."""
         out: list[str] = []
         for f in sorted(self.s.memory_dir.glob("*.md"), reverse=True)[:days]:
             out.append(f"## {f.stem}\n{_read(f)}")
         return "\n\n".join(out)
-
-    def consolidate(self, summarize) -> str:
-        """Promote recent episodic notes into durable MEMORY.
-
-        *summarize* is a callable ``str -> str`` (an LLM call) that returns a few
-        bullet-point lessons worth keeping. Letta/OpenClaw "dreaming".
-        """
-        recent = self.recent_journal(days=2).strip()
-        if not recent:
-            return "nothing to consolidate"
-        lessons = summarize(
-            "Extract at most 5 durable, reusable lessons or facts from these notes, "
-            "as plain '- ' bullets. Skip anything ephemeral.\n\n" + recent
-        ).strip()
-        if lessons:
-            _append(self.s.memory_file, f"\n<!-- consolidated {datetime.now(timezone.utc):%Y-%m-%d} -->")
-            _append(self.s.memory_file, lessons)
-        return lessons or "no durable lessons found"
 
 
 def _read(path: Path) -> str:

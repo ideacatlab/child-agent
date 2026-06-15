@@ -1,9 +1,9 @@
 """A committed, self-rendering knowledge registry.
 
 The agent's durable, shareable self-knowledge (findings, gaps, playbook notes),
-stored as JSON and re-rendered to Markdown on every change — exactly the
-self-rendering registry pattern from ali-fleet-recovery's ``podgaps.py``. Lives
-under ``knowledge/`` so ``publish`` version-controls it.
+stored as JSON and re-rendered to Markdown on every change — the self-rendering
+registry pattern from ali-fleet-recovery's ``podgaps.py``. Lives under
+``knowledge/`` so ``scion publish`` version-controls it.
 """
 
 from __future__ import annotations
@@ -13,8 +13,6 @@ import time
 from datetime import datetime, timezone
 
 from scion.config import get_settings
-from scion.security.policy import MODERATE, SAFE
-from scion.tools.base import tool
 
 
 class KnowledgeRegistry:
@@ -47,8 +45,7 @@ class KnowledgeRegistry:
             if not items:
                 continue
             out.append(f"## {status}")
-            for it in items:
-                out.append(f"- **{it['id']}** — {it['title']}: {it['detail']}")
+            out += [f"- **{it['id']}** — {it['title']}: {it['detail']}" for it in items]
             out.append("")
         self.md_path.write_text("\n".join(out), encoding="utf-8")
 
@@ -66,32 +63,3 @@ class KnowledgeRegistry:
         return "\n".join(
             f"{it['id']} [{it['status']}] {it['title']}: {it['detail'][:100]}" for it in self._items
         )
-
-
-_REGISTRY: KnowledgeRegistry | None = None
-
-
-def _reg() -> KnowledgeRegistry:
-    global _REGISTRY
-    if _REGISTRY is None:
-        _REGISTRY = KnowledgeRegistry()
-    return _REGISTRY
-
-
-@tool(risk=MODERATE)
-def note_knowledge(title: str, detail: str, status: str = "open") -> str:
-    """Record a durable finding/gap/playbook note in the knowledge registry.
-
-    Args:
-        title: short title.
-        detail: the finding or note.
-        status: open | in-progress | resolved | note.
-    """
-    kid = _reg().note(title, detail, status)
-    return f"recorded {kid}"
-
-
-@tool(risk=SAFE, parallel_safe=True)
-def list_knowledge() -> str:
-    """List everything in the knowledge registry."""
-    return _reg().listing()

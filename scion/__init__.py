@@ -1,30 +1,25 @@
-"""scion — a self-improving generalist Claude agent harness.
+"""scion — a self-improving generalist agent harness driven by Claude Code.
 
-scion is a *base*: a generalist, no-scope agent that can build its own tools,
-ingest knowledge, remember across runs, talk to you on Telegram, and publish its
-own improvements back to GitHub. Fork it and grow a specialist (a marketer, an
-SRE, a researcher) that gets better from the feedback of the people who use it.
+scion has **no LLM API dependency and costs nothing per token**. The "brain" is a
+long-lived **Claude Code** session (your subscription), kept looping 24/7 by the
+``/loop`` skill and a *master prompt*. scion is the durable infrastructure that
+session drives: a task queue, Telegram, retrieval over your documents, persistent
+memory + knowledge, a tool/skill workshop, and git self-publish — all exposed as a
+plain ``scion`` CLI and all running on the Python standard library.
 
-The whole core runs on the Python standard library. The only hard dependency is
-the LLM SDK (``anthropic``); RAG, web access, and richer embeddings are optional
-extras that degrade gracefully.
+This is the ali-fleet-recovery "sentinel" model, generalized: deterministic shell
++ Python automation feeds a durable queue; Claude Code drains it, does open-ended
+work with its native tools plus the ``scion`` CLI, replies on Telegram, writes
+itself new tools/skills/knowledge, and publishes the improvements back to git.
 
-Architecture, in one breath::
-
-    channels (Telegram/CLI)  ->  task queue (durable SQLite)
-                                      |
-                                 worker drains it
-                                      v
-        AgentLoop( LLM, ToolRegistry, Memory, RAG, Skills )
-                                      |
-            +-------------------------+-------------------------+
-            |             |            |            |           |
-         tools        memory        skills        rag      self-tooling
-       (hot-load)   (markdown +   (SKILL.md +   (hybrid   (author->verify->
-                     blocks)      progressive    search)    register->publish)
-                                  disclosure)
+    always-on shell layer (no LLM):  Telegram receiver + cron ticker -> queue
+    brain layer (your subscription): Claude Code  /loop  +  MASTER_PROMPT.md
+                                        |  drains the queue, acts, replies,
+                                        |  builds tools/knowledge, publishes
+                                        v
+              scion CLI: task · tg · rag · memory · know · skill · tool · publish
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__"]

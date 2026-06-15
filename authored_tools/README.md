@@ -1,15 +1,24 @@
 # authored_tools/
 
-Tools the agent has written for itself live here, one `.py` file per tool. They
-are **hot-loaded by path** at startup (and immediately after the agent authors
-one) and are **version-controlled** — `scion publish` commits this directory so
-the agent's growing capability is durable, reviewable, and rollback-able.
+Tools the agent has written for itself live here — one `.py` file per tool, each a
+small **CLI script** (a usage docstring + an `argparse` interface) that the Claude
+Code session runs via bash, e.g. `python authored_tools/business_days.py 2026-06-01
+2026-06-15`. This is ali-fleet-recovery's "every tool is a script with a usage
+docstring; the filesystem is the registry" convention.
 
-Each file is a normal module that defines one or more `@tool`-decorated functions
-(scion adds the decoration automatically when the agent writes a bare function).
-You can also drop your own hand-written tools here — same contract as the
-built-ins under `scion/tools/builtins/`.
+They're **version-controlled** — `scion publish commit "…"` ships this directory,
+so the agent's growing capability is durable, reviewable, and rollback-able. You
+can hand-write tools here too; same contract.
 
-Pending drafts (validated but not yet activated) live under
-`workspace/tool_drafts/` until approved with `scion tool approve <name>` or
-auto-applied when `SCION_TOOL_AUTOAPPLY=1`.
+Lifecycle:
+
+```
+scion tool new <name> --description "…"   # scaffold a draft (workspace/tool_drafts/)
+# ...implement the script...
+scion tool validate <name>                # syntax + structure + a --help smoke run
+scion tool approve <name>                 # promote the validated draft here
+scion tool list                           # what's available
+```
+
+A tool stays a *draft* under `workspace/tool_drafts/` until it validates and is
+approved — a tool that won't even run `--help` never becomes "real."

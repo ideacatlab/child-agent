@@ -1,10 +1,10 @@
-"""Channels — the surfaces the agent talks on.
+"""Channels — how the agent reaches the operator.
 
-A :class:`~scion.channels.base.Channel` is anything that can deliver a message
-and (optionally) ask the operator to confirm a risky action. The CLI channel
-backs interactive ``scion chat``; the Telegram channel backs the always-on bot.
+Telegram is the always-on surface: a deterministic **receiver** (no LLM) enqueues
+messages and acks; Claude Code replies with the **sender**. The CLI is the brain's
+own surface.
 """
 
-from scion.channels.base import Channel, CLIChannel
+from scion.channels.telegram import TelegramClient, TelegramReceiver, notify, send
 
-__all__ = ["Channel", "CLIChannel"]
+__all__ = ["TelegramClient", "TelegramReceiver", "send", "notify"]

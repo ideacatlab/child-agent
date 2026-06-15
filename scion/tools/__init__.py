@@ -1,17 +1,19 @@
-"""The tool system.
+"""The tool workshop.
 
-A *tool* is the unit of capability and the unit of registration. One
-self-describing object bundles the callable, its JSON schema (derived from the
-function signature + docstring), a coarse risk level, and provenance. New
-capability arrives by *dropping in a tool* — including tools the agent writes for
-itself at runtime (see :mod:`scion.tools.builtins.tool_author`).
-
-Design lineage: gptme's single ``ToolSpec`` dataclass, smolagents' schema-from-
-signature, Hermes' import-time self-registering registry, OpenHands' typed tool
-contract resolved by a runtime registry.
+In the Claude-Code model a *tool* is a small, self-documenting CLI script in
+``authored_tools/`` that the session runs via bash — exactly ali-fleet-recovery's
+"every tool is a script with a usage docstring + argparse" convention. Claude Code
+writes them itself; this module is the *discipline* around that: scaffold a
+template, statically screen + smoke-test it (Voyager's verified-before-persisted),
+then promote it into the version-controlled ``authored_tools/`` folder.
 """
 
-from scion.tools.base import Tool, ToolError, tool
-from scion.tools.registry import ToolRegistry, get_registry
+from scion.tools.authoring import (
+    list_authored,
+    list_drafts,
+    promote,
+    scaffold,
+    validate,
+)
 
-__all__ = ["Tool", "ToolError", "tool", "ToolRegistry", "get_registry"]
+__all__ = ["scaffold", "validate", "promote", "list_authored", "list_drafts"]

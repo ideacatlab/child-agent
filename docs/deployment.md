@@ -1,139 +1,95 @@
-# Deployment — running scion unattended
+# Deployment — running scion 24/7
 
-Running scion as a long-lived, hands-off agent: the autonomy stack, the safety flags
-that decide what it may do without you, where its state lives, supervision, and
-recurring work. Read the
-[Safety model](../README.md#safety-model-read-this-before-going-autonomous) first —
-autonomy is opt-in and the defaults are conservative on purpose.
+scion runs as **two long-lived pieces**, and a real deployment keeps both up:
 
-## 1. The autonomy stack — `scion serve`
+- the **sentinel** — a deterministic, no-LLM daemon (`scion sentinel`) that receives
+  Telegram messages and ticks cron, dropping everything onto a durable SQLite queue. You
+  supervise it with systemd or `nohup`.
+- the **brain** — one **Claude Code session** in this repo running `/loop scion autopilot`.
+  It follows [`MASTER_PROMPT.md`](../MASTER_PROMPT.md), and every cycle claims the next task
+  off the queue and does it with its own read/write/bash/web tools plus the `scion` CLI.
+  **No Anthropic API, no SDK, no per-token cost** — the brain is your subscription.
 
-`scion serve` runs the whole hands-off loop in one process:
+> There is **no `scion serve`** and no LLM-calling worker — and no `SCION_AUTONOMOUS`,
+> `SCION_REQUIRE_CONFIRMATION`, `SCION_TOOL_AUTOAPPLY`, or `SCION_ALLOW_SELF_TOOLING`.
+> Those are gone; see the [README](../README.md#how-it-works) for the architecture.
 
-- the **queue worker** — claims tasks off the durable SQLite queue and runs the agent on each,
-- the **cron scheduler** — fires interval/daily jobs that drop tasks on the queue,
-- the **Telegram bot** — accepts messages and streams replies (only if a token is set).
+## 1. The two processes (and why you need both)
 
-Each component runs under a **restart-on-crash supervisor** with capped exponential
-backoff (2s → 60s): if one throws it is logged and restarted while the others keep running.
-
-```bash
-scion serve                       # worker + scheduler + bot (if TELEGRAM_BOT_TOKEN set)
+```
+  sentinel  ──  scion sentinel  (a daemon, no LLM)
+     Telegram receiver ─┐
+     cron ticker        ┴─►  workspace/queue.db  ◄─  scion task add / cron firings
+                                      │  (nothing is lost — the queue is durable)
+                                      ▼
+  brain  ──  ONE Claude Code session:  /loop scion autopilot   (follows MASTER_PROMPT.md)
+     each cycle:  scion autopilot → claim next task → do it → reply → scion task done
 ```
 
-**Headless (no Telegram).** If `TELEGRAM_BOT_TOKEN` is empty the bot is skipped and the
-**worker runs in the foreground** with the scheduler behind it — the normal shape for a
-backend node. The agent still drains the queue and runs cron jobs; task results are just
-stored on the queue record instead of sent anywhere.
+**Both are required, but they fail independently and safely:**
 
-**Flags** (each turns one component off):
+- The **sentinel without the brain** still works — Telegram messages and cron firings
+  pile up on the queue — but nothing gets *done* until a brain drains it.
+- The **brain without the sentinel** still works — `/loop` keeps draining whatever is
+  queued, and you can feed it with `scion task add` — but it has no Telegram/cron input.
 
-| Flag | Effect |
+## 2. The sentinel — `scion sentinel`
+
+`scion sentinel` runs the always-on deterministic layer and blocks until Ctrl-C:
+
+| Command | What runs |
 |---|---|
-| `--no-bot` | Never start the Telegram bot, even with a token. The worker takes the foreground. |
-| `--no-worker` | Don't drain the queue. Bot/scheduler still run, but tasks pile up unprocessed. |
-| `--no-scheduler` | Don't run cron. Worker + bot still run; scheduled jobs won't fire. |
+| `scion sentinel` | Telegram receiver (foreground) + cron ticker (background thread) |
+| `scion sentinel --no-telegram` | cron ticker only (background thread; main thread parked) |
+| `scion sentinel --no-cron` | Telegram receiver only |
+| `scion sentinel --no-telegram --no-cron` | nothing to do — logs a warning and returns (don't) |
 
-```bash
-scion serve --no-bot                 # headless worker + scheduler (backend node)
-scion serve --no-bot --no-scheduler  # pure queue drainer
-scion serve --no-worker              # bot + scheduler only (another host drains the queue)
-```
+**Headless (no Telegram).** If `TELEGRAM_BOT_TOKEN` is empty the receiver is skipped
+automatically — exactly like `--no-telegram` — so **only cron runs, in a background
+thread**, while the process parks the foreground. That is the normal shape for a backend
+node with no chat channel: cron firings still land on the queue for the brain to drain.
 
-Durability is layered: the supervisor restarts a crashed *component*,
-`scripts/run-serve.sh` (§4) restarts a crashed `scion serve` *process*, and the worker
-re-queues any task orphaned mid-run (a stuck-task sweep runs every ~60s).
-
-## 2. Autonomy & safety flags
-
-Four environment variables decide what the agent may do with no human present. They map
-onto a coarse **risk policy**: `safe` runs, `moderate` runs (reversible/loggable),
-`dangerous` is **gated**.
-
-| Var | Default | Meaning |
-|---|---|---|
-| `SCION_AUTONOMOUS` | `0` | Let the worker drain the queue and act without a human in the loop. |
-| `SCION_REQUIRE_CONFIRMATION` | `1` | Gate DANGEROUS tools behind an approval step. |
-| `SCION_ALLOW_SELF_TOOLING` | `1` | Allow the agent to author + register brand-new tools at runtime. |
-| `SCION_TOOL_AUTOAPPLY` | `0` | Auto-activate authored tools that pass static + sandbox checks (else `scion tool approve`). |
-
-**The crucial detail for unattended use:** the worker has **no interactive surface** to
-ask for approval (cron tasks have no channel; the Telegram channel streams but cannot
-confirm). So under the policy:
-
-- `run_shell`, `run_python`, file edits and other **MODERATE** tools **always run** —
-  confirmation does *not* gate them. This is why the Docker sandbox (§6) is the real
-  boundary once you grant autonomy with shell access.
-- `publish_changes` and other **DANGEROUS** tools are **denied** while
-  `SCION_REQUIRE_CONFIRMATION=1`, and **allowed** when it is `0`.
-
-**Cautious** — autonomous, but cannot publish or self-activate tools unattended:
-
-```bash
-SCION_AUTONOMOUS=1
-SCION_REQUIRE_CONFIRMATION=1     # DANGEROUS tools (publish) denied with no human to ask
-SCION_ALLOW_SELF_TOOLING=1
-SCION_TOOL_AUTOAPPLY=0           # authored tools wait for `scion tool approve <name>`
-SCION_SANDBOX_DOCKER_IMAGE=python:3.12-slim
-```
-
-**Trusted autonomous** — fully hands-off, including self-publish and live self-tooling:
-
-```bash
-SCION_AUTONOMOUS=1
-SCION_REQUIRE_CONFIRMATION=0     # DANGEROUS tools run without asking — see §7
-SCION_ALLOW_SELF_TOOLING=1
-SCION_TOOL_AUTOAPPLY=1           # validated authored tools go live automatically
-SCION_SANDBOX_DOCKER_IMAGE=python:3.12-slim   # strongly recommended at this trust level
-```
-
-Even in the trusted profile the **secret-staging guard** (§7) and the static + sandbox
-screening of authored tools still apply — they are not governed by these flags.
+**Restart-on-crash is layered.** Each component (`telegram-receiver`, `cron`) runs under
+a supervisor that logs and restarts it with capped exponential backoff (2s → 60s);
+`scripts/run-sentinel.sh` restarts the whole `scion sentinel` process if it exits; and
+systemd (§4) restarts the script — three layers, so a crash anywhere self-heals.
 
 ## 3. State & persistence
 
-Everything the running agent writes lives under **`workspace/`** — gitignored,
-machine-local, and the one thing you must back up:
+Everything the running system writes lives under **`workspace/`** — gitignored,
+machine-local, and the one tree you must back up:
 
 ```
 workspace/
-  queue.db        durable task queue (chat + cron tasks, status, results)
-  vectors.db      RAG vector store
-  scheduler.db    cron jobs
-  SOUL.md USER.md MEMORY.md   identity + user profile + long-term memory
-  memory/         core-memory blocks
-  sessions/       per-session transcripts
-  events/         append-only event log (for replay)
-  tool_drafts/    authored tools awaiting approval (when AUTOAPPLY=0)
-  logs/scion.log  rolling log
+  queue.db          durable task queue (Telegram + cron + CLI tasks, status, results)
+  vectors.db        RAG vector store
+  scheduler.db      cron jobs
+  SOUL.md USER.md MEMORY.md   identity + operator profile + long-term memory
+  memory/           core-memory blocks
+  tool_drafts/      authored-tool drafts awaiting `scion tool approve`
+  logs/scion.log    rolling log
 ```
 
-Relocate the whole tree with **`SCION_WORKSPACE`** (absolute path, or `~`) — e.g. onto a
-backed-up volume: `SCION_WORKSPACE=/var/lib/scion/workspace`.
-
-**Back this directory up.** It is the agent's brain, queue, and audit trail. A periodic
-snapshot is enough; for a consistent SQLite copy, take it while the service is stopped:
-
-```bash
-systemctl stop scion
-tar czf /backups/scion-workspace-$(date +%F).tgz -C /var/lib/scion workspace
-systemctl start scion
-```
+Relocate the whole tree with **`SCION_WORKSPACE`** (absolute path or `~`), e.g.
+`SCION_WORKSPACE=/var/lib/scion/workspace` onto a backed-up volume. **Back it up** — it is
+the queue, the memory, and the audit trail. For a consistent SQLite snapshot, copy the
+tree while the sentinel is stopped and the brain idle (e.g. `tar czf scion.tgz workspace`).
 
 By contrast **`authored_tools/`, `knowledge/`, and `skills/`** live at the repo root and
-are **version-controlled** — the agent's durable, shareable growth. Persist them with
-`scion publish` (§7) or ordinary git, *not* the workspace backup.
+are **committed** — the agent's durable, shareable growth. The brain persists them with
+`scion publish commit "…"` (§8) or ordinary git, *not* the workspace backup.
 
-## 4. Run it as a service
+## 4. Run the sentinel as a service
 
-`scripts/run-serve.sh` wraps `scion serve` in its own restart loop and `cd`s to the repo
-root. Point a process manager at it.
+`scripts/run-sentinel.sh` wraps `scion sentinel` in its own restart loop and `cd`s to
+the repo root. Point systemd at it. **systemd manages the sentinel only — not the
+Claude Code session** (you start that yourself in a terminal/tmux, §5).
 
 ```ini
-# /etc/systemd/system/scion.service
+# /etc/systemd/system/scion-sentinel.service
 [Unit]
-Description=scion autonomy stack (worker + scheduler + Telegram bot)
-After=network-online.target docker.service
+Description=scion sentinel — Telegram receiver + cron ticker (no LLM)
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -142,10 +98,10 @@ User=scion
 WorkingDirectory=/opt/scion
 EnvironmentFile=/opt/scion/.env
 Environment=PATH=/opt/scion/.venv/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/opt/scion/scripts/run-serve.sh
+ExecStart=/opt/scion/scripts/run-sentinel.sh
 Restart=always
 RestartSec=5
-KillSignal=SIGINT          # scion shuts down cleanly on the Ctrl-C path
+KillSignal=SIGINT          # run_sentinel shuts down cleanly on the Ctrl-C path
 TimeoutStopSec=30
 
 [Install]
@@ -154,118 +110,120 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now scion
-journalctl -u scion -f      # systemd's view; app logs also go to workspace/logs/scion.log
+sudo systemctl enable --now scion-sentinel
+journalctl -u scion-sentinel -f    # systemd's view; app logs also go to workspace/logs/scion.log
 ```
 
-Notes: point `WorkingDirectory` at the repo root and put the venv's `bin/` on `PATH` so the
-bare `scion` in `run-serve.sh` resolves (adjust `/opt/scion`). scion also loads `.env`
-itself from the project root, so `EnvironmentFile` is belt-and-braces — keep `.env` to plain
-`KEY=value` lines (no trailing `#` comments), which systemd parses literally. Drop
-`docker.service` from `After=` if you aren't using the sandbox.
+Notes: `WorkingDirectory` is the repo root and the venv's `bin/` is on `PATH` so the bare
+`scion` in `run-sentinel.sh` resolves (adjust `/opt/scion`). scion loads `.env` from the
+project root itself, so `EnvironmentFile` is belt-and-braces — keep `.env` to plain
+`KEY=value` lines. Quick alternative without systemd:
+`nohup ./scripts/run-sentinel.sh >/dev/null 2>&1 &` (logs still land in
+`workspace/logs/scion.log`; prefer systemd where restart-on-reboot matters).
 
-Quick alternative: `nohup ./scripts/run-serve.sh >/dev/null 2>&1 &` — logs still land in
-`workspace/logs/scion.log`; prefer systemd where restart-on-reboot matters.
+## 5. Keeping the brain alive
 
-## 5. Scheduling recurring work
-
-Cron jobs persist in `scheduler.db`. Each firing **drops a task on the durable queue**,
-and the worker runs it exactly like any chat request (in autonomous mode) — so scheduled
-work inherits the same queue, recovery, and safety policy.
+The brain is interactive, so run it inside **tmux** or **screen** so it survives SSH
+disconnects:
 
 ```bash
-scion cron add-interval <name> <30m|2h|1d> "<task>"   # every N seconds/minutes/hours/days
+tmux new -s scion-brain
+#  inside the session: launch Claude Code in this repo, then start the loop:
+/loop scion autopilot
+#  detach with Ctrl-b d — the session keeps running. Reattach: tmux attach -t scion-brain
+```
+
+`/loop` re-invokes `MASTER_PROMPT.md` each cycle; `scion autopilot` hands the brain the
+next task (or prints `IDLE`, in which case it ends the turn and the loop calls it
+again). With no interval given, the loop self-paces.
+
+If the brain *does* die, **nothing is lost**: the sentinel keeps queuing, `queue.db` is
+durable, and when you restart the loop the first thing `scion autopilot` does is
+**re-queue any task that was claimed but never finished**, then resume draining where it
+left off.
+
+## 6. Scheduling recurring work
+
+Cron jobs persist in `scheduler.db`. Each firing **drops a task on the durable queue**,
+and the brain runs it like any other task — same queue, same recovery, same safety
+guidance.
+
+```bash
+scion cron add-interval <name> <30m|2h|1d> "<task>"   # every N s/m/h/d (or bare seconds)
 scion cron add-daily    <name> <HH:MM>     "<task>"   # once a day at local HH:MM
 scion cron list                                       # jobs + next fire time
 scion cron remove <name>                              # delete a job
+scion cron run                                        # fire all due jobs once, now (testing)
 ```
 
-Intervals accept `s`/`m`/`h`/`d` suffixes (or bare seconds). Re-adding an existing
-`<name>` updates it. The scheduler checks for due jobs every ~30s and de-duplicates each
-firing, so a job never double-queues for the same tick.
+Re-adding an existing `<name>` updates it in place. The sentinel's ticker checks for due
+jobs about every 30s and de-duplicates each firing, so a job never double-queues per tick.
 
 ```bash
-# nightly memory consolidation
-scion cron add-daily memory-consolidation 04:00 \
-  "Review today's sessions and new MEMORY.md entries; merge duplicates, prune stale notes,
-   and tidy the core memory blocks."
-
-# hourly inbox sweep
-scion cron add-interval inbox-check 1h \
-  "Check the shared inbox and summarize anything that needs my attention."
-
-# nightly self-publish (only acts unattended if SCION_REQUIRE_CONFIRMATION=0 — §7)
-scion cron add-daily nightly-publish 02:30 \
-  "If you authored tools or recorded knowledge today, publish_changes with a concise message."
+# daily memory consolidation + an hourly check (each firing becomes a queue task)
+scion cron add-daily    memory-consolidation 04:00 "Merge duplicate MEMORY.md entries; prune stale notes."
+scion cron add-interval inbox-check          1h    "Check the shared inbox; summarize anything that needs attention."
 ```
 
-## 6. Real sandboxing for execution
+## 7. Safety knobs for unattended operation
 
-By default `run_shell`/`run_python` are subprocesses with timeouts and POSIX resource
-caps — a *convenience* boundary, not a security one. Because execution tools are MODERATE
-and run **without** confirmation (§2), containerize them before granting autonomy with
-shell access.
+**Claude Code's own permission model is the primary control** — it governs every bash
+command, file edit, and web fetch the brain runs, so configure its allow/deny lists and
+sandbox to bound what the brain may do. The `SCION_*` flags below are behavioral guidance
+the brain reads via the master prompt; they sit *on top* of that gate.
 
-Set `SCION_SANDBOX_DOCKER_IMAGE` and the agent's shell commands route through
-`docker run --rm` against that image, with the working directory bind-mounted at `/work`
-and **networking off by default**:
+| Var | Default | Meaning |
+|---|---|---|
+| `SCION_CONFIRM_DANGEROUS` | `1` | Master prompt asks the operator before destructive/outward actions (delete, send, git push). |
+| `SCION_ALLOW_PUBLISH` | `1` | Whether the brain may commit + push at all. |
+
+**Sandbox the tool-workshop smoke checks.** `scion tool validate` runs a `--help` smoke
+test on authored code. Point `SCION_SANDBOX_DOCKER_IMAGE` at an image and that run routes
+through `docker run --rm` with the working dir bind-mounted at `/work` and **networking
+off by default**:
 
 ```bash
+SCION_CONFIRM_DANGEROUS=1
+SCION_ALLOW_PUBLISH=1
 SCION_SANDBOX_DOCKER_IMAGE=python:3.12-slim
-SCION_SANDBOX_NET=none      # default; set e.g. "bridge" only if the agent needs egress
+SCION_SANDBOX_NET=none      # default; set e.g. "bridge" only if a check needs egress
 ```
 
-Notes: this containerizes `run_shell` (the broad code-as-action surface) — to run Python in
-the sandbox, have the agent invoke it via the shell (`python3 - <<'EOF' …`) rather than the
-bare `run_python` snippet tool, which still runs in a local subprocess. The service account
-needs permission to run containers (the `docker` group) and `docker` on `PATH`. Keep
-`SCION_SANDBOX_NET=none` unless a task needs egress. This is the recommended hardening
-before flipping `SCION_AUTONOMOUS=1` on any machine you care about.
+The **brain's** environment (where you launched Claude Code) needs `docker` on `PATH` for
+this — the sentinel never touches the sandbox.
 
-## 7. Self-publish in production
+## 8. Self-publish in production
 
-To let the agent push its own improvements (authored tools + knowledge), configure a
-remote:
+To let the brain push its own improvements (authored tools, skills, knowledge), configure a remote:
 
 ```bash
-SCION_GIT_REMOTE=git@github.com:you/your-agent.git   # SSH remote recommended
+SCION_GIT_REMOTE=git@github.com:you/your-agent.git   # SSH recommended (deploy key, no token in env)
 # or HTTPS + token:  SCION_GIT_REMOTE=https://github.com/you/your-agent.git
 #                    GITHUB_TOKEN=ghp_...
 SCION_GIT_AUTHOR=scion <agent@your-host>
 ```
 
-An **SSH deploy key** is cleanest on a server (no token in the environment).
-`scion publish "<msg>"` commits and pushes; the agent does the same via `publish_changes`.
+`scion publish commit "<message>"` commits and pushes the agent's growth;
+`scion publish status` shows the pending diff. The publisher **hard-aborts if a secret
+got staged**, regardless of any flag. With `SCION_CONFIRM_DANGEROUS=1` the brain confirms
+with you before the push lands; with `SCION_ALLOW_PUBLISH=0` it won't publish at all.
 
-`publish_changes` is **DANGEROUS-risk**. In `scion serve` there is no one to approve it, so
-under the default `SCION_REQUIRE_CONFIRMATION=1` it is **denied**. For fully-unattended
-publishing you must set `SCION_REQUIRE_CONFIRMATION=0`.
-
-> **Risk:** this also un-gates *every other* dangerous tool for the unattended worker — the
-> agent can push to your remote (and take other outward, hard-to-reverse actions) on its
-> own. Only do this on a setup you trust, ideally with the Docker sandbox (§6) in place.
-
-The **secret-staging guard** still protects you regardless: the publisher hard-aborts the
-commit if any secret-like file or value is staged, and secrets are masked from tool output
-and logs.
-
-## 8. Operations
+## 9. Operations
 
 ```bash
 tail -f workspace/logs/scion.log      # follow the live log (SCION_LOG=debug for verbose)
 
-scion task list                       # recent tasks + counts
-scion task list --status failed       # filter by status
-scion task list --limit 50
-
-scion doctor                          # config, API key, deps, subsystems, channels
-scion task work --once                # drain ONE task in the foreground (no serve stack) — for debugging
-
+scion doctor                          # workspace, flags, deps, subsystems, channels, start steps
+scion task list                       # recent tasks + counts (--status failed / --limit N)
 scion cron list                       # schedules + next fire time
-scion tool list                       # registered + authored tools
+scion autopilot                       # claim + print ONE task to hand-drain it yourself
 ```
 
-`scion doctor` is the first thing to run on a new host: it prints the active workspace, the
-autonomy/confirmation/self-tooling flags, whether the API key and Telegram token are set, and
-which optional dependencies are installed. A failed task never stalls the worker or loses
-data from the durable queue — `scion task list --status failed` shows what to retry.
+`scion doctor` is the first thing to run on a new host: it prints the active workspace,
+the `confirm_dangerous` / `allow_publish` flags and embedding backend, the optional deps
+installed, the health of each subsystem (queue, knowledge base, authored tools), whether
+the Telegram token and git remote are set, and the two commands to start the brain. To
+hand-drain one task without the loop, run **`scion autopilot`** — it claims and prints the
+next task plus the exact `scion tg send` / `scion task done` lines to finish it; do the
+work, then close it. A failed task never stalls anything, and the durable queue means
+nothing is lost between runs.

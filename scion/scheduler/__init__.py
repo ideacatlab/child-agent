@@ -1,11 +1,11 @@
-"""Autonomy: a worker that drains the task queue, a cron scheduler, and a
-supervisor that runs them (plus the Telegram bot) with restart-on-crash.
+"""The always-on deterministic layer ("the sentinel").
 
-This is the piece ali-fleet-recovery deliberately left to a human launching
-Claude Code out-of-band — here it's built in, so the agent runs hands-off.
+No LLM. A Telegram **receiver** enqueues messages and a **cron** scheduler drops
+timed work onto the same durable queue. Run it under a supervisor; Claude Code
+(the brain) drains the queue separately via ``/loop`` + the master prompt.
 """
 
 from scion.scheduler.cron import CronScheduler, get_scheduler
-from scion.scheduler.worker import Worker
+from scion.scheduler.supervisor import run_sentinel
 
-__all__ = ["CronScheduler", "get_scheduler", "Worker"]
+__all__ = ["CronScheduler", "get_scheduler", "run_sentinel"]

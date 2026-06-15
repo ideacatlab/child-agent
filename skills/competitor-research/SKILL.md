@@ -11,9 +11,9 @@ This is an example skill — it shows how a forked scion becomes a *specialist*.
 ## Steps
 1. **Scope.** Note what the operator actually needs (positioning? pricing?
    feature gaps? hiring signals?). If unstated, produce a general brief.
-2. **Gather.** Use `web_search` for the company + "pricing", "vs", "review",
-   "funding". Use `web_fetch` on the most useful 3–5 pages (their site, a
-   comparison, a review roundup). If documents were ingested, `rag_search` them.
+2. **Gather.** Use your native web tools (search + fetch) for the company +
+   "pricing", "vs", "review", "funding". If relevant documents were ingested,
+   `scion rag search "<query>" --collection <name>` and cite the chunks.
 3. **Extract** into these sections:
    - One-line positioning and ICP (ideal customer profile).
    - Pricing & packaging (tiers, anchors, what's gated).
@@ -22,9 +22,10 @@ This is an example skill — it shows how a forked scion becomes a *specialist*.
    - Where *we* can win (the wedge).
 4. **Verify.** Don't state a price or claim you didn't see a source for. Mark
    anything inferred as inferred.
-5. **Persist.** Save durable findings with `note_knowledge` and, if this is
-   recurring, keep the company in core memory (`core_memory_append open_loops`).
-6. **Deliver** the brief as the final message — lead with the wedge.
+5. **Persist.** Save durable findings with `scion know note "<title>" "<detail>"`
+   and, if this is a recurring account, `scion memory remember "<fact>"`.
+6. **Deliver** the brief as your reply (`scion tg send <chat_id> "…"` if the task
+   came from Telegram) — lead with the wedge.
 
 ## Output shape
 A tight Markdown brief with the sections above, ≤ 400 words unless asked for more.

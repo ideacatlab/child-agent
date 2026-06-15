@@ -4,48 +4,40 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scion"
-version = "0.1.0"
-description = "A self-improving generalist Claude agent harness — graft new capabilities onto a living core."
+version = "0.2.0"
+description = "Durable infrastructure for a 24/7 Claude-Code-driven self-improving generalist agent (no API cost)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "scion" }]
-keywords = ["claude", "anthropic", "agent", "harness", "llm", "rag", "self-improving", "telegram"]
+keywords = ["claude", "claude-code", "agent", "harness", "rag", "self-improving", "telegram", "autonomous"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
 
-# The CORE runs on the Python standard library alone. Everything below is the
-# one true external dependency (the LLM). All other capabilities (RAG, web,
-# richer embeddings, vector stores) degrade gracefully and are opt-in extras.
-dependencies = [
-  "anthropic>=0.40",
-]
+# ZERO required dependencies. The brain is a Claude Code session (your
+# subscription), not an LLM API — there is no SDK to install. The entire core
+# runs on the Python standard library. Everything below is optional and degrades
+# gracefully.
+dependencies = []
 
 [project.optional-dependencies]
 # Recommended quality-of-life set for real use.
 recommended = ["requests>=2.28", "numpy>=1.23", "pypdf>=4.0"]
-# Document loaders.
+# Document loaders for RAG ingestion.
 docs = ["pypdf>=4.0", "beautifulsoup4>=4.11", "lxml>=4.9"]
-# Higher-quality embedding backends (the default needs nothing).
+# Local semantic embeddings (still no API / no per-token cost).
 embeddings-local = ["sentence-transformers>=2.2"]
+# Hosted embedding backends (these DO cost money; the default 'hashing' is free).
 embeddings-voyage = ["voyageai>=0.2"]
 embeddings-openai = ["openai>=1.0"]
-# Heavier vector store backend (the default sqlite store needs nothing).
-vectorstore-chroma = ["chromadb>=0.4"]
 dev = ["pytest>=7.0", "ruff>=0.1"]
-all = [
-  "requests>=2.28", "numpy>=1.23", "pypdf>=4.0",
-  "beautifulsoup4>=4.11", "lxml>=4.9",
-]
+all = ["requests>=2.28", "numpy>=1.23", "pypdf>=4.0", "beautifulsoup4>=4.11", "lxml>=4.9"]
 
 [project.scripts]
 scion = "scion.cli:main"
-
-[project.urls]
-Homepage = "https://example.com/scion"
 
 [tool.hatch.build.targets.wheel]
 packages = ["scion"]
@@ -53,6 +45,10 @@ packages = ["scion"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint.per-file-ignores]
+# the argparse builder is intentionally dense (one subparser per line)
+"scion/cli.py" = ["E702", "E701"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

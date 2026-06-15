@@ -1,11 +1,12 @@
 """Configuration & paths.
 
-Loads ``.env`` into the process environment (``setdefault`` semantics: real env
-vars always win), exposes a typed :class:`Settings` snapshot, and knows where
-every piece of state lives on disk. Pure stdlib.
+Loads ``.env`` into the environment (``setdefault``: real env vars win), exposes a
+typed :class:`Settings` snapshot, and knows where every piece of state lives. Pure
+stdlib. There is no LLM/API configuration here — the brain is a Claude Code
+session, not an API key.
 
-Inherited shape from ali-fleet-recovery's ``aliconf.py``: a single shared loader
-with ``set_env_var`` write-back (used for Telegram chat-id auto-capture).
+Inherited shape from ali-fleet-recovery's ``aliconf.py``: one shared loader with
+``set_env_var`` write-back (used for Telegram chat-id auto-capture).
 """
 
 from __future__ import annotations
@@ -39,22 +40,15 @@ def load_env(root: Path | None = None) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, val = line.partition("=")
-        val = val.strip().strip('"').strip("'")
-        os.environ.setdefault(key.strip(), val)
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
 def set_env_var(key: str, value: str, root: Path | None = None) -> None:
-    """Create-or-update a single line in ``.env`` and the live environment.
-
-    Used to persist auto-discovered values (e.g. ``TELEGRAM_CHAT_ID``) so the
-    next run already knows them — exactly the ali-fleet-recovery trick.
-    """
+    """Create-or-update a single line in ``.env`` and the live environment."""
     root = root or find_root()
     env_path = root / ".env"
-    lines: list[str] = []
+    lines: list[str] = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
     found = False
-    if env_path.exists():
-        lines = env_path.read_text(encoding="utf-8").splitlines()
     for i, line in enumerate(lines):
         if line.strip().startswith(f"{key}="):
             lines[i] = f"{key}={value}"
@@ -68,9 +62,7 @@ def set_env_var(key: str, value: str, root: Path | None = None) -> None:
 
 def _bool(name: str, default: bool) -> bool:
     v = os.environ.get(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
+    return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _int(name: str, default: int) -> int:
@@ -81,9 +73,8 @@ def _int(name: str, default: int) -> int:
 
 
 def _list_int(name: str) -> list[int]:
-    raw = os.environ.get(name, "").strip()
     out: list[int] = []
-    for part in raw.replace(";", ",").split(","):
+    for part in os.environ.get(name, "").replace(";", ",").split(","):
         part = part.strip()
         if part.lstrip("-").isdigit():
             out.append(int(part))
@@ -98,25 +89,16 @@ class Settings:
     # identity
     agent_name: str = "Scion"
 
-    # llm
-    model: str = "claude-opus-4-8"
-    effort: str = "high"
-    max_tokens: int = 16000
-    thinking: str = "adaptive"  # "adaptive" | "off"
-
-    # autonomy & safety
-    autonomous: bool = False
-    require_confirmation: bool = True
-    allow_self_tooling: bool = True
-    tool_autoapply: bool = False
-    max_tool_iterations: int = 40  # circuit breaker for the agent loop
+    # behavioral guidance the master prompt reads (Claude Code enforces it)
+    confirm_dangerous: bool = True   # ask the operator before destructive/outward actions
+    allow_publish: bool = True       # may the agent push to git unattended
 
     # telegram
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     telegram_allowed_user_ids: list[int] = field(default_factory=list)
 
-    # embeddings / rag
+    # embeddings / rag (default backend needs nothing and costs nothing)
     embedding_backend: str = "hashing"
     embedding_model: str | None = None
     embedding_dim: int = 512
@@ -129,7 +111,7 @@ class Settings:
     root: Path = field(default_factory=find_root)
     workspace: Path = field(default_factory=lambda: find_root() / "workspace")
 
-    # ---- derived paths ---------------------------------------------------- #
+    # ---- derived paths (committed: the agent's durable growth) ------------ #
     @property
     def authored_tools_dir(self) -> Path:
         return self.root / "authored_tools"
@@ -142,6 +124,7 @@ class Settings:
     def skills_dirs(self) -> list[Path]:
         return [self.root / "skills", self.workspace / "skills"]
 
+    # ---- derived paths (private runtime state, gitignored) ---------------- #
     @property
     def memory_dir(self) -> Path:
         return self.workspace / "memory"
@@ -171,14 +154,6 @@ class Settings:
         return self.workspace / "scheduler.db"
 
     @property
-    def sessions_dir(self) -> Path:
-        return self.workspace / "sessions"
-
-    @property
-    def events_dir(self) -> Path:
-        return self.workspace / "events"
-
-    @property
     def logs_dir(self) -> Path:
         return self.workspace / "logs"
 
@@ -191,20 +166,12 @@ class Settings:
     def load(cls) -> "Settings":
         root = find_root()
         load_env(root)
-        ws_override = os.environ.get("SCION_WORKSPACE", "").strip()
-        workspace = Path(ws_override).expanduser().resolve() if ws_override else root / "workspace"
-        thinking = os.environ.get("SCION_THINKING", "adaptive").strip().lower()
+        ws = os.environ.get("SCION_WORKSPACE", "").strip()
+        workspace = Path(ws).expanduser().resolve() if ws else root / "workspace"
         return cls(
             agent_name=os.environ.get("SCION_AGENT_NAME", "Scion"),
-            model=os.environ.get("SCION_MODEL", "claude-opus-4-8").strip(),
-            effort=os.environ.get("SCION_EFFORT", "high").strip(),
-            max_tokens=_int("SCION_MAX_TOKENS", 16000),
-            thinking="off" if thinking in ("off", "0", "false", "disabled") else "adaptive",
-            autonomous=_bool("SCION_AUTONOMOUS", False),
-            require_confirmation=_bool("SCION_REQUIRE_CONFIRMATION", True),
-            allow_self_tooling=_bool("SCION_ALLOW_SELF_TOOLING", True),
-            tool_autoapply=_bool("SCION_TOOL_AUTOAPPLY", False),
-            max_tool_iterations=_int("SCION_MAX_TOOL_ITERATIONS", 40),
+            confirm_dangerous=_bool("SCION_CONFIRM_DANGEROUS", True),
+            allow_publish=_bool("SCION_ALLOW_PUBLISH", True),
             telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
             telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
             telegram_allowed_user_ids=_list_int("TELEGRAM_ALLOWED_USER_IDS"),
@@ -218,17 +185,9 @@ class Settings:
         )
 
     def ensure_dirs(self) -> None:
-        """Create every runtime directory. Safe to call repeatedly."""
         for d in (
-            self.workspace,
-            self.memory_dir,
-            self.sessions_dir,
-            self.events_dir,
-            self.logs_dir,
-            self.drafts_dir,
-            self.authored_tools_dir,
-            self.knowledge_dir,
-            self.root / "skills",
+            self.workspace, self.memory_dir, self.logs_dir, self.drafts_dir,
+            self.authored_tools_dir, self.knowledge_dir, self.root / "skills",
         ):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -241,6 +200,5 @@ def get_settings() -> Settings:
 
 
 def reload_settings() -> Settings:
-    """Drop the cached settings (after editing .env at runtime)."""
     get_settings.cache_clear()
     return get_settings()

@@ -1,58 +1,54 @@
-from scion.tools.authoring import author_tool_pipeline, build_module
-from scion.tools.sandbox import run_python_snippet, static_check_source
+from scion.tools.authoring import list_authored, promote, scaffold, validate
 
-GOOD = (
-    "def slugify(text: str) -> str:\n"
-    '    "Turn text into a url slug."\n'
-    "    import re\n"
-    '    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")\n'
-)
+REAL_TOOL = '''\
+#!/usr/bin/env python3
+"""Add two integers.
 
-
-def test_static_check_pass_and_fail():
-    ok = static_check_source(GOOD)
-    assert ok.ok and "slugify" in ok.func_names
-    bad = static_check_source("def broken(:\n    pass")
-    assert not bad.ok and bad.errors
+Usage: python authored_tools/adder.py A B
+"""
+import argparse
 
 
-def test_build_module_decorates():
-    mod = build_module("slugify", GOOD, "safe")
-    assert "from scion.tools.base import tool" in mod
-    assert 'tool(name="slugify"' in mod
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("a", type=int)
+    p.add_argument("b", type=int)
+    args = p.parse_args(argv)
+    print(args.a + args.b)
+    return 0
 
 
-def test_sandbox_runs_python():
-    rc, out = run_python_snippet("print(6*7)")
-    assert rc == 0 and "42" in out
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
 
 
-def test_author_pipeline_pending(settings):
-    res = author_tool_pipeline(
-        "slugify",
-        "make a url slug",
-        GOOD,
-        test_code='assert slugify("Hello World!") == "hello-world"',
-        risk="safe",
-        autoapply=False,
-    )
+def test_scaffold_stub_is_rejected(settings):
+    path = scaffold("demo", "a demo tool")
+    assert path.exists()
+    res = validate(path)
+    assert not res.ok  # still a stub (NotImplementedError / TODO)
+
+
+def test_validate_and_promote_real_tool(settings, tmp_path):
+    # isolate authored_tools/ under the temp root so we don't touch the repo
+    settings.root = tmp_path / "repo"
+    settings.ensure_dirs()
+    draft = settings.drafts_dir / "adder.py"
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    draft.write_text(REAL_TOOL)
+
+    res = validate(draft)
     assert res.ok, res.message
-    assert res.stage == "pending"
-    assert res.tool_name == "slugify"
-    assert (settings.drafts_dir / "slugify.py").exists()
+
+    dest = promote("adder")
+    assert dest.exists()
+    assert "adder" in [name for name, _ in list_authored()]
 
 
-def test_author_pipeline_rejects_bad(settings):
-    res = author_tool_pipeline("oops", "bad", "def f(:\n pass", autoapply=False)
+def test_validate_rejects_broken(settings):
+    bad = settings.drafts_dir / "broken.py"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text("def f(:\n    pass\n")
+    res = validate(bad)
     assert not res.ok and res.stage == "static"
-
-
-def test_author_pipeline_failing_test(settings):
-    res = author_tool_pipeline(
-        "adder",
-        "adds",
-        "def adder(a: int, b: int) -> int:\n    'add'\n    return a + b\n",
-        test_code="assert adder(1, 1) == 3",  # wrong on purpose
-        autoapply=False,
-    )
-    assert not res.ok and res.stage == "test"

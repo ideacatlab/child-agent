@@ -1,6 +1,6 @@
-.PHONY: install dev test lint fmt doctor chat serve clean
+.PHONY: install dev test lint fmt doctor sentinel autopilot clean
 
-install:        ## install core only
+install:        ## install core only (no dependencies)
 	pip install -e .
 
 dev:            ## install with everything + dev tools
@@ -18,11 +18,11 @@ fmt:            ## auto-fix lint
 doctor:         ## check config + dependencies
 	scion doctor
 
-chat:           ## interactive chat
-	scion chat
+sentinel:       ## run the always-on layer (telegram receiver + cron). The BRAIN is
+	scion sentinel   ## separate: open Claude Code and run `/loop scion autopilot`.
 
-serve:          ## run the autonomy stack (worker + scheduler + bot)
-	scion serve
+autopilot:      ## hand-drain one task (what the /loop brain calls each cycle)
+	scion autopilot
 
 clean:          ## remove runtime state (keeps your .env)
 	find workspace -mindepth 1 -not -name '.gitkeep' -delete
