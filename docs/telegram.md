@@ -1,14 +1,14 @@
 # Telegram 🤖
 
-Telegram is scion's front door — but **there is no LLM in this path.** A
+Telegram is agent's front door — but **there is no LLM in this path.** A
 deterministic **receiver** long-polls Telegram, drops every incoming message onto
 the durable queue, and immediately acks *"queued — working on it."* The **brain**
-(your Claude Code session, looping over `scion autopilot`) drains that queue later
-and replies with `scion tg send <chat_id> "…"`. The receiver never calls the
+(your Claude Code session, looping over `agent autopilot`) drains that queue later
+and replies with `agent tg send <chat_id> "…"`. The receiver never calls the
 model, so it never blocks on it and nothing is lost if the brain is busy or down.
 
-Everything here lives in [`scion/channels/telegram.py`](../scion/channels/telegram.py)
-(built on `urllib`, zero extra dependencies). Run `scion doctor` at any point — its
+Everything here lives in [`agent/channels/telegram.py`](../agent/channels/telegram.py)
+(built on `urllib`, zero extra dependencies). Run `agent doctor` at any point — its
 **channels** section reports whether the token is set and what `chat_id` it will use.
 
 ---
@@ -25,7 +25,7 @@ Everything here lives in [`scion/channels/telegram.py`](../scion/channels/telegr
    ```
 
 That's the **only** value you must set by hand. There is **no API key anywhere** —
-scion has none; the brain is your Claude Code subscription, not a hosted model.
+agent has none; the brain is your Claude Code subscription, not a hosted model.
 On startup the receiver calls Telegram's `getMe`; if the token is bad it fails
 loudly with `Telegram auth failed`.
 
@@ -37,7 +37,7 @@ Leave `TELEGRAM_CHAT_ID` **blank**. The **first message the bot receives** trigg
 auto-capture: the receiver reads the incoming `chat.id` and writes it back into
 `.env` for you, so the next run already knows where "home" is.
 
-The write-back is `set_env_var` in [`scion/config.py`](../scion/config.py) — it
+The write-back is `set_env_var` in [`agent/config.py`](../agent/config.py) — it
 create-or-updates the `TELEGRAM_CHAT_ID=` line in `.env` *and* the live environment
 in one shot. After your first "hi" you'll see the line populated:
 
@@ -76,39 +76,39 @@ allow-list is what keeps strangers from queueing work.
 
 ## 4. The two halves: how a message flows end to end
 
-scion splits Telegram into a deterministic half and a thinking half. They meet only
+agent splits Telegram into a deterministic half and a thinking half. They meet only
 at the durable queue.
 
 ```
-  you ──▶ Telegram ──▶ RECEIVER  (scion tg receive  /  scion sentinel)
+  you ──▶ Telegram ──▶ RECEIVER  (agent tg receive  /  agent daemon)
                           │  enqueue onto the durable queue (SQLite)
-                          │  ack:  "📥 Queued *#7* — Scion will work this and reply here."
+                          │  ack:  "📥 Queued *#7* — I'll work this and reply here."
                           ▼
                      durable queue  ── nothing is lost; the receiver is done here
                           │
                           ▼
-   BRAIN  (a Claude Code session on  /loop scion autopilot)
-      scion autopilot              → claims task #7, prints its chat_id + text
-      …does the work with native tools + the scion CLI…
-      scion tg send <chat_id> "…"  ──▶ Telegram ──▶ you
-      scion task done 7 --result "…"
+   BRAIN  (a Claude Code session on  /loop agent autopilot)
+      agent autopilot              → claims task #7, prints its chat_id + text
+      …does the work with native tools + the agent CLI…
+      agent tg send <chat_id> "…"  ──▶ Telegram ──▶ you
+      agent task done 7 --result "…"
 ```
 
-**(a) The receiver** (`scion tg receive`, or the Telegram half of `scion sentinel`)
+**(a) The receiver** (`agent tg receive`, or the Telegram half of `agent daemon`)
 long-polls, and for every authorized non-command message it calls
 `get_queue().add(text, kind="chat", source="telegram", …)` — recording the
 `chat_id` and message id in the task's `origin` — then replies in-thread with
-`📥 Queued *#N* — Scion will work this and reply here.` (a repeat of an already-queued
+`📥 Queued *#N* — I'll work this and reply here.` (a repeat of an already-queued
 message just gets `already queued as #N`). **That's all it does. It never calls the
 model.**
 
-**(b) The brain** picks the task up on its next cycle. `scion autopilot` claims the
+**(b) The brain** picks the task up on its next cycle. `agent autopilot` claims the
 oldest task and prints it, and for a Telegram-origin task it prints the exact reply
 line to use:
 
 ```
-  reply:  scion tg send 987654321 "<your reply>"
-  close:  scion task done 7 --result "<one-line summary>"
+  reply:  agent tg send 987654321 "<your reply>"
+  close:  agent task done 7 --result "<one-line summary>"
 ```
 
 The brain does the work, sends its answer back to that `chat_id`, and closes the
@@ -119,19 +119,19 @@ task. The `chat_id` always comes from autopilot's printed task — you never gue
 ## 5. Running it
 
 ```bash
-scion sentinel        # receiver + cron together, restart-on-crash (the daemon)
-scion tg receive      # just the receiver, in the foreground
+agent daemon        # receiver + cron together, restart-on-crash (the daemon)
+agent tg receive      # just the receiver, in the foreground
 ```
 
-`scion sentinel` runs the always-on deterministic layer from
-[`scheduler/supervisor.py`](../scion/scheduler/supervisor.py): the **receiver** in
+`agent daemon` runs the always-on deterministic layer from
+[`scheduler/supervisor.py`](../agent/scheduler/supervisor.py): the **receiver** in
 the foreground and the **cron scheduler** behind it as a supervised thread, each
 **restarted on crash** with capped backoff. (`--no-telegram` / `--no-cron` drop a
 half; with no token the receiver is skipped and cron holds the foreground.)
-`scion tg receive` is just the receiver alone — handy for a quick test.
+`agent tg receive` is just the receiver alone — handy for a quick test.
 
 > **You also need the brain running.** The receiver only *queues* messages. Start a
-> Claude Code session in this repo and run **`/loop scion autopilot`** (it follows
+> Claude Code session in this repo and run **`/loop agent autopilot`** (it follows
 > [`MASTER_PROMPT.md`](../MASTER_PROMPT.md) and drains the queue forever). Without a
 > `/loop` session, messages are acked as "queued" but **never answered** — they just
 > pile up in the queue.
@@ -155,16 +155,16 @@ command surface — there's no inline session to reset, because there's no inlin
 
 ## 7. Proactive messages
 
-The bot doesn't only react — scion can reach out to your **default chat**
+The bot doesn't only react — agent can reach out to your **default chat**
 (`TELEGRAM_CHAT_ID`, from §2):
 
-- **`scion tg send <chat_id> "…"`** — the brain's reply path, and also usable to push
+- **`agent tg send <chat_id> "…"`** — the brain's reply path, and also usable to push
   to any chat. Prints `sent`, or `send failed (token/chat configured?)`.
 - **`notify(text)`** — the helper in `telegram.py`. Pushes one message to the
   **default chat**; a no-op (returns `False`) unless both token and chat id are set.
 - **Cron-driven pings** — a scheduled job enqueues a task with no chat of its own;
-  when the brain runs it, it can `notify(...)` or `scion tg send` the result into your
-  default chat. Run `scion sentinel` (receiver + cron) plus a `/loop` session and your
+  when the brain runs it, it can `notify(...)` or `agent tg send` the result into your
+  default chat. Run `agent daemon` (receiver + cron) plus a `/loop` session and your
   daily/interval jobs report into Telegram automatically.
 
 ---
@@ -178,7 +178,7 @@ The bot doesn't only react — scion can reach out to your **default chat**
 - **The brain decides what actually happens.** Queueing a message is not authority to
   act — the Claude Code session follows [`MASTER_PROMPT.md`](../MASTER_PROMPT.md),
   which holds it back from destructive or outward-facing actions (e.g. asking first
-  when `SCION_CONFIRM_DANGEROUS=1`), on top of Claude Code's own permission prompts.
+  when `AGENT_CONFIRM_DANGEROUS=1`), on top of Claude Code's own permission prompts.
 
 ---
 

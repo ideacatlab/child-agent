@@ -1,6 +1,6 @@
-import scion.queue.task_queue as tq
-from scion.channels.telegram import TelegramReceiver
-from scion.queue.task_queue import TaskQueue
+import agent.queue.task_queue as tq
+from agent.channels.telegram import TelegramReceiver
+from agent.queue.task_queue import TaskQueue
 
 
 class _StubClient:

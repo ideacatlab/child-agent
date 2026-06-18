@@ -1,6 +1,6 @@
-import scion.scheduler.cron as cron
-from scion.queue.task_queue import TaskQueue
-from scion.scheduler.cron import CronScheduler, parse_interval
+import agent.scheduler.cron as cron
+from agent.queue.task_queue import TaskQueue
+from agent.scheduler.cron import CronScheduler, parse_interval
 
 
 def test_parse_interval():

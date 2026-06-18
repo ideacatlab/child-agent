@@ -1,4 +1,4 @@
-from scion.security.secrets import SecretRegistry, looks_like_secret
+from agent.security.secrets import SecretRegistry, looks_like_secret
 
 
 def test_secret_masking(monkeypatch):

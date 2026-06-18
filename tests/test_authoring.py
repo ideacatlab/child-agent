@@ -1,4 +1,4 @@
-from scion.tools.authoring import list_authored, promote, scaffold, validate
+from agent.tools.authoring import list_authored, promote, scaffold, validate
 
 REAL_TOOL = '''\
 #!/usr/bin/env python3

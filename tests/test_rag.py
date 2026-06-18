@@ -1,8 +1,8 @@
-from scion.rag.chunkers import chunk_text
-from scion.rag.embeddings import HashingEmbedder
-from scion.rag.pipeline import IngestionPipeline
-from scion.rag.retrieve import search
-from scion.rag.store import VectorStore
+from agent.rag.chunkers import chunk_text
+from agent.rag.embeddings import HashingEmbedder
+from agent.rag.pipeline import IngestionPipeline
+from agent.rag.retrieve import search
+from agent.rag.store import VectorStore
 
 
 def test_hashing_embedder_deterministic():

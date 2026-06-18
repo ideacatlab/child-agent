@@ -3,24 +3,24 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "scion"
-version = "0.2.0"
-description = "Durable infrastructure for a 24/7 Claude-Code-driven self-improving generalist agent (no API cost)."
+name = "agent"
+version = "0.3.0"
+description = "A self-improving, self-rewriting multi-agent runtime driven by Claude Code (no API cost)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "scion" }]
-keywords = ["claude", "claude-code", "agent", "harness", "rag", "self-improving", "telegram", "autonomous"]
+authors = [{ name = "agent" }]
+keywords = ["claude", "claude-code", "agent", "multi-agent", "orchestrator", "self-improving", "self-rewriting", "telegram", "autonomous"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
 
-# ZERO required dependencies. The brain is a Claude Code session (your
-# subscription), not an LLM API — there is no SDK to install. The entire core
-# runs on the Python standard library. Everything below is optional and degrades
-# gracefully.
+# ZERO required dependencies. The brain — and every spawned worker — is a `claude`
+# process on your subscription, not an LLM API; there is no SDK to install. The
+# entire core runs on the Python standard library. Everything below is optional and
+# degrades gracefully.
 dependencies = []
 
 [project.optional-dependencies]
@@ -37,10 +37,10 @@ dev = ["pytest>=7.0", "ruff>=0.1"]
 all = ["requests>=2.28", "numpy>=1.23", "pypdf>=4.0", "beautifulsoup4>=4.11", "lxml>=4.9"]
 
 [project.scripts]
-scion = "scion.cli:main"
+agent = "agent.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["scion"]
+packages = ["agent"]
 
 [tool.ruff]
 line-length = 100
@@ -48,7 +48,7 @@ target-version = "py310"
 
 [tool.ruff.lint.per-file-ignores]
 # the argparse builder is intentionally dense (one subparser per line)
-"scion/cli.py" = ["E702", "E701"]
+"agent/cli.py" = ["E702", "E701"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

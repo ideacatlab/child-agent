@@ -1,11 +1,11 @@
-from scion.memory.blocks import BlockStore
-from scion.memory.store import MemoryStore
+from agent.memory.blocks import BlockStore
+from agent.memory.store import MemoryStore
 
 
 def test_memory_seed_and_search(settings):
     mem = MemoryStore(settings)
-    assert settings.soul_file.exists()
-    mem.remember("The deploy command is `scion serve`.")
+    assert settings.identity_file.exists()
+    mem.remember("The deploy command is `agent serve`.")
     mem.journal("tested the worker")
     hits = mem.search("deploy command")
     assert any("deploy" in line.lower() for _, line in hits)

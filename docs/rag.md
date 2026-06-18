@@ -5,29 +5,29 @@
 That's the use case this subsystem is built for, and it's the one thing **plain
 Claude Code cannot do on its own**. A client drops a folder of briefs, brand
 guidelines, past campaigns, and contracts on the agent. Claude Code can't read 200
-PDFs into context, but it *can* `scion rag search` across them and pull back only
+PDFs into context, but it *can* `agent rag search` across them and pull back only
 the handful of passages that matter, **with citations**, instead of bluffing —
 RAG's whole value-add over a bare Claude Code session.
 
 The whole path runs on the **Python standard library** — no vector database, no
 embedding service, no API key — so it works the moment you clone the repo. You
-drive it through three CLI subcommands (`scion rag ingest`, `scion rag search`,
-`scion rag stats`). The agent is itself a Claude Code session, so it calls those
+drive it through three CLI subcommands (`agent rag ingest`, `agent rag search`,
+`agent rag stats`). The agent is itself a Claude Code session, so it calls those
 **same subcommands from its shell**: there is no `rag_*` tool to register, and
 nothing here ever touches an LLM API.
 
 ## A note on cost (read this first)
 
-scion's whole reason to exist is **avoiding per-token cost** — the brain is your
+agent's whole reason to exist is **avoiding per-token cost** — the brain is your
 flat Claude Code subscription, not a metered API. Retrieval honours that:
 
 - **`hashing` (the default) is free.** A deterministic, zero-dependency
-  feature-hashing bag-of-words embedder (`scion/rag/embeddings.py`). No package, no
+  feature-hashing bag-of-words embedder (`agent/rag/embeddings.py`). No package, no
   service, no key — it runs out of the box.
 - **`sentence-transformers` (local) is also free.** Real semantic embeddings that
   run **on your machine**: a one-time model download, then no per-call cost.
 - **`voyage` and `openai` are hosted and DO cost money** — they bill per request.
-  They're the *only* place in scion that reintroduces a metered bill, so reach for
+  They're the *only* place in agent that reintroduces a metered bill, so reach for
   them deliberately. (Voyage is Anthropic's suggested provider if you go hosted.)
 
 **Why is the free default *local*, not "just use Anthropic"?** Because **Anthropic
@@ -37,14 +37,14 @@ vectors. A free local default is the only zero-cost option; hosted is a paid opt
 ## Ingesting documents
 
 ```bash
-scion rag ingest <path> --collection <name>
+agent rag ingest <path> --collection <name>
 ```
 
 - `<path>` is a single file **or a folder**. Folders are walked **recursively**
   (`rglob`) and every supported file under them is ingested in sorted order.
 - `--collection` defaults to `default`. See [Collections](#collections).
 
-**Supported file types** (`scion/rag/loaders.py`):
+**Supported file types** (`agent/rag/loaders.py`):
 
 | Kind | Suffixes |
 |---|---|
@@ -71,8 +71,8 @@ install the extra.
 
 ### Re-ingesting only touches changed files (content-hash dedup)
 
-Ingestion is an **upsert keyed by a content hash** (`scion/rag/pipeline.py`,
-`scion/rag/store.py`): scion computes `sha256(content)` per document and compares it
+Ingestion is an **upsert keyed by a content hash** (`agent/rag/pipeline.py`,
+`agent/rag/store.py`): agent computes `sha256(content)` per document and compares it
 to the stored hash for that file's absolute path. Unchanged → **skipped** (no
 re-embedding, no writes). Changed → re-chunk, re-embed, and **replace** that
 document's chunks (old deleted, new inserted) in one transaction.
@@ -94,21 +94,21 @@ A **collection** is a named, isolated index. Keep one topic or client per
 collection so a search for client A never surfaces client B's documents:
 
 ```bash
-scion rag ingest ./acme_corp   --collection acme
-scion rag ingest ./globex_inc  --collection globex
+agent rag ingest ./acme_corp   --collection acme
+agent rag ingest ./globex_inc  --collection globex
 ```
 
 Collections share one SQLite store but are filtered on every query, so they don't
-bleed into each other. List what exists with `scion rag stats`.
+bleed into each other. List what exists with `agent rag stats`.
 
 The agent **chooses a collection per task** from context — your instructions, the
 task text, or core memory ("the ACME work lives in the `acme` collection"). Tell it
-which one, or record it in memory / `SOUL.md`.
+which one, or record it in memory / `IDENTITY.md`.
 
 ## Searching
 
 ```bash
-scion rag search "<query>" --collection <name> -k N
+agent rag search "<query>" --collection <name> -k N
 ```
 
 `--collection` defaults to `default`; `-k` is the number of chunks to return
@@ -116,7 +116,7 @@ scion rag search "<query>" --collection <name> -k N
 
 ### The hybrid retriever
 
-scion runs **two retrievers and fuses them** (`scion/rag/retrieve.py`):
+agent runs **two retrievers and fuses them** (`agent/rag/retrieve.py`):
 
 1. **Dense** — cosine similarity between the query embedding and every stored chunk
    embedding (vectors are L2-normalized, so a dot product *is* cosine). The semantic
@@ -140,19 +140,19 @@ document (`Result.cite()`) — so answers are auditable back to the exact passag
 Refunds are issued to the original payment method within 14 business days...
 ```
 
-The agent is told to lean on this: `MASTER_PROMPT.md` pairs `scion rag search` with
+The agent is told to lean on this: `MASTER_PROMPT.md` pairs `agent rag search` with
 **"retrieve relevant chunks (cite them!)"** and a *Recall first* rule to search
 before non-trivial work — so it grounds answers in cited chunks rather than guessing.
 
 ## Embedding backends
 
-Set `SCION_EMBEDDING_BACKEND` in `.env`. If the chosen backend's package or key is
+Set `AGENT_EMBEDDING_BACKEND` in `.env`. If the chosen backend's package or key is
 missing, `get_embedder` **logs a warning and falls back to `hashing`** so retrieval
 never hard-fails.
 
-| `SCION_EMBEDDING_BACKEND` | Install extra | Key | Cost | Dim | Default model |
+| `AGENT_EMBEDDING_BACKEND` | Install extra | Key | Cost | Dim | Default model |
 |---|---|---|---|---|---|
-| `hashing` *(default)* | none | none | **free** | `SCION_EMBEDDING_DIM` (512) | — |
+| `hashing` *(default)* | none | none | **free** | `AGENT_EMBEDDING_DIM` (512) | — |
 | `sentence-transformers` *(aliases `st`, `local`)* | `.[embeddings-local]` | none (local) | **free** | model-defined (384 for MiniLM) | `all-MiniLM-L6-v2` |
 | `voyage` | `.[embeddings-voyage]` | `VOYAGE_API_KEY` | **paid (hosted)** | 1024 | `voyage-3` |
 | `openai` | `.[embeddings-openai]` | `OPENAI_API_KEY` | **paid (hosted)** | 1536 | `text-embedding-3-small` |
@@ -160,28 +160,28 @@ never hard-fails.
 ```bash
 # free, local semantic upgrade — no key, no per-call cost
 pip install -e ".[embeddings-local]"
-# in .env:  SCION_EMBEDDING_BACKEND=sentence-transformers
+# in .env:  AGENT_EMBEDDING_BACKEND=sentence-transformers
 ```
 
 Other knobs (`.env.example`):
 
-- **`SCION_EMBEDDING_MODEL`** — override the default model for the chosen backend
+- **`AGENT_EMBEDDING_MODEL`** — override the default model for the chosen backend
   (e.g. a different checkpoint, or `voyage-3-large`). Ignored by `hashing`.
-- **`SCION_EMBEDDING_DIM`** — vector size, and it **only matters for `hashing`**.
+- **`AGENT_EMBEDDING_DIM`** — vector size, and it **only matters for `hashing`**.
   The real backends report their own fixed dimension; this value does nothing there.
 
 ### Switching backends? Re-ingest.
 
 Embeddings from different backends aren't comparable (different geometry, sometimes
-different sizes), so after changing `SCION_EMBEDDING_BACKEND` you must **re-embed
-your corpus**. But a plain `scion rag ingest` **skips unchanged files** — dedup keys
+different sizes), so after changing `AGENT_EMBEDDING_BACKEND` you must **re-embed
+your corpus**. But a plain `agent rag ingest` **skips unchanged files** — dedup keys
 on content, not on which embedder ran — so it won't refresh vectors on its own. To
 force a clean rebuild, delete `workspace/vectors.db` and re-ingest, or use a fresh
 `--collection`.
 
 That `workspace/vectors.db` is the whole store (`docs` + `chunks` tables, embeddings
 as JSON, `numpy` used if present). It's gitignored, so your corpus stays private;
-`scion rag stats` reports `{'documents': N, 'chunks': N, 'collections': {...}}`.
+`agent rag stats` reports `{'documents': N, 'chunks': N, 'collections': {...}}`.
 
 ## Worked example
 
@@ -190,11 +190,11 @@ as JSON, `numpy` used if present). It's gitignored, so your corpus stays private
 pip install -e ".[docs]"
 
 # 2. ingest a client's whole document folder into its own collection
-scion rag ingest ./clients/acme --collection acme
+agent rag ingest ./clients/acme --collection acme
 # → ingested into 'acme': added=12 updated=0 skipped=0 chunks=204 errors=0
 
 # 3. search it directly — exactly what the agent runs from its shell
-scion rag search "what is the refund window?" --collection acme -k 3
+agent rag search "what is the refund window?" --collection acme -k 3
 #
 # [/home/you/clients/acme/refund-policy.pdf#1] (score 0.0328)
 # Customers may request a refund within 14 business days of purchase...
@@ -203,8 +203,8 @@ scion rag search "what is the refund window?" --collection acme -k 3
 # Q: How long do refunds take? A: Up to 14 business days...
 ```
 
-Now give the running agent a task — `scion task add "Using the acme knowledge base,
+Now give the running agent a task — `agent task add "Using the acme knowledge base,
 what's their refund window? Cite it."` (or message it on Telegram). Its Claude Code
-loop runs that same `scion rag search`, reads the top chunks, and answers grounded
+loop runs that same `agent rag search`, reads the top chunks, and answers grounded
 in `[refund-policy.pdf#1]` instead of guessing — on your flat subscription, free
 default embedder, no API key anywhere.

@@ -1,6 +1,6 @@
 # Creating tools
 
-A guide for a **human developer** hand-writing a tool for scion. (The agent writes
+A guide for a **human developer** hand-writing a tool for agent. (The agent writes
 its own tools the same way — see [`authored_tools/README.md`](../authored_tools/README.md).)
 
 A tool here is **not** a `@tool`-decorated Python function — there is no registry, no
@@ -16,7 +16,7 @@ it needs.
 A tool is an executable script at `authored_tools/<name>.py` with two things:
 
 - **(a) a module docstring** whose *first line* is the one-sentence description (it's
-  what `scion tool list` shows and what the session reads to decide whether to use the
+  what `agent tool list` shows and what the session reads to decide whether to use the
   tool) and whose body documents usage — the flags, the arguments, what it prints.
 - **(b) an `argparse` CLI** wired through `main(argv=None) -> int`, returning a process
   exit code, run under `if __name__ == "__main__": raise SystemExit(main())`.
@@ -25,7 +25,7 @@ Names are lowercase **snake_case, 2–49 chars** (`^[a-z_][a-z0-9_]{1,48}$`). Fi
 names start with `_` are treated as private and skipped by discovery, so give a real
 tool a real name.
 
-That's the whole contract. No import of scion, no decorator, no schema — most tools are
+That's the whole contract. No import of agent, no decorator, no schema — most tools are
 plain stdlib. The session "calls" the tool by reading its docstring and shelling out:
 `python authored_tools/<name>.py …`.
 
@@ -34,9 +34,9 @@ plain stdlib. The session "calls" the tool by reading its docstring and shelling
 Scaffold a draft, implement it, validate, approve:
 
 ```console
-$ scion tool new word_count --description "Count words, lines, or characters in a text file."
+$ agent tool new word_count --description "Count words, lines, or characters in a text file."
 scaffolded draft: workspace/tool_drafts/word_count.py
-implement it, then: scion tool validate word_count
+implement it, then: agent tool validate word_count
 ```
 
 Drafts live in `workspace/tool_drafts/` (gitignored, private). The scaffold is a runnable
@@ -54,7 +54,7 @@ def main(argv=None) -> int:
     return 0
 ```
 
-`scion tool validate <name>` screens the draft in three stages:
+`agent tool validate <name>` screens the draft in three stages:
 
 1. **static** — parses the source (syntax must be valid) and requires at least one
    function definition. It also rejects a script that still contains `NotImplementedError`
@@ -65,11 +65,11 @@ def main(argv=None) -> int:
    (`eval`/`exec`/`compile`/`__import__`, `rm -rf /`, …) — warnings are advisory, not gates.
 
 ```console
-$ scion tool validate word_count          # while still a stub
+$ agent tool validate word_count          # while still a stub
 ❌ [static] still a stub (implement run()/main())
 ```
 
-`scion tool approve <name>` re-validates the draft and, only if it passes, promotes it from
+`agent tool approve <name>` re-validates the draft and, only if it passes, promotes it from
 `workspace/tool_drafts/` into the committed `authored_tools/` folder. A tool that won't
 validate never becomes "real".
 
@@ -127,13 +127,13 @@ if __name__ == "__main__":
 Validate and approve:
 
 ```console
-$ scion tool validate word_count
+$ agent tool validate word_count
 ✅ [ok] validated (syntax + structure + --help)
 
-$ scion tool approve word_count
+$ agent tool approve word_count
 promoted: authored_tools/word_count.py
 
-$ scion tool list
+$ agent tool list
 word_count               Count the words, lines, or characters in a text file.
 ```
 
@@ -146,7 +146,7 @@ $ python authored_tools/word_count.py README.md --unit lines
 
 (The draft copy stays behind in `workspace/tool_drafts/`; it's gitignored and harmless —
 delete it if you like.) Finally, commit the new capability so it's durable and reviewable:
-`scion publish commit "add word_count tool"`.
+`agent publish commit "add word_count tool"`.
 
 ## 4. Conventions worth following
 
@@ -170,20 +170,20 @@ Mirroring ali-fleet-recovery, the tools that age well share a shape:
 You don't have to use the scaffold. Because the folder *is* the registry, you can drop a
 finished `authored_tools/<name>.py` straight into the tree by hand — the contract is
 identical (docstring first line = description, `argparse` + `main`, snake_case name, stays
-self-documenting). You can still run `scion tool validate <name>` on it afterward
+self-documenting). You can still run `agent tool validate <name>` on it afterward
 (`validate` falls back to looking in `authored_tools/` when there's no matching draft) to
-confirm it screens clean, then `scion publish commit "…"` to ship it.
+confirm it screens clean, then `agent publish commit "…"` to ship it.
 
-## 6. Tools that need scion's own infra
+## 6. Tools that need agent's own infra
 
-Most tools are plain stdlib. But a tool *may* reach into scion when it has to — two easy
+Most tools are plain stdlib. But a tool *may* reach into agent when it has to — two easy
 options:
 
-- **Shell out to the `scion` CLI** with `subprocess`, e.g. a tool that enriches output with
-  a knowledge-base lookup can run `scion rag search "<query>" -k 3` and parse stdout. This
-  keeps the tool decoupled from scion's internals.
-- **Import scion modules** directly if you prefer, e.g. `from scion.rag.retrieve import
-  search` or `from scion.memory.store import get_memory`. Import lazily inside the function
+- **Shell out to the `agent` CLI** with `subprocess`, e.g. a tool that enriches output with
+  a knowledge-base lookup can run `agent rag search "<query>" -k 3` and parse stdout. This
+  keeps the tool decoupled from agent's internals.
+- **Import agent modules** directly if you prefer, e.g. `from agent.rag.retrieve import
+  search` or `from agent.memory.store import get_memory`. Import lazily inside the function
   so a tool that's only ever run standalone stays cheap.
 
 Either way the tool is still just a script: a docstring, an `argparse` CLI, and a `main`

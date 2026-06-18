@@ -1,4 +1,4 @@
-from scion.queue.task_queue import TaskQueue
+from agent.queue.task_queue import TaskQueue
 
 
 def test_enqueue_idempotent_and_claim(tmp_path):

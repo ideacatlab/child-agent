@@ -1,4 +1,4 @@
-from scion.skills.loader import SkillLibrary, _split_frontmatter
+from agent.skills.loader import SkillLibrary, _split_frontmatter
 
 
 def test_frontmatter_parse():

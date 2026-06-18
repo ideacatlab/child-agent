@@ -1,11 +1,12 @@
-from scion.config import load_env, set_env_var
+from agent.config import load_env, set_env_var
 
 
 def test_settings_paths(settings):
     assert settings.workspace.name == "ws"
     assert settings.queue_db.parent == settings.workspace
     assert settings.authored_tools_dir.name == "authored_tools"
-    assert settings.agent_name  # non-empty default
+    assert settings.agent_name == ""  # name-agnostic base; set per-deploy via AGENT_NAME
+    assert settings.agents_dir.name == "agents"  # committed agent-role definitions
     assert settings.embedding_backend == "hashing"  # free default
 
 

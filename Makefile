@@ -1,4 +1,4 @@
-.PHONY: install dev test lint fmt doctor sentinel autopilot clean
+.PHONY: install dev test lint fmt doctor daemon autopilot fleet clean
 
 install:        ## install core only (no dependencies)
 	pip install -e .
@@ -10,19 +10,22 @@ test:           ## run the test suite
 	pytest -q
 
 lint:           ## lint
-	ruff check scion tests
+	ruff check agent tests
 
 fmt:            ## auto-fix lint
-	ruff check --fix scion tests
+	ruff check --fix agent tests
 
-doctor:         ## check config + dependencies
-	scion doctor
+doctor:         ## check config + dependencies + the fleet
+	agent doctor
 
-sentinel:       ## run the always-on layer (telegram receiver + cron). The BRAIN is
-	scion sentinel   ## separate: open Claude Code and run `/loop scion autopilot`.
+daemon:         ## run the always-on layer (telegram receiver + cron + supervision).
+	agent daemon    ## The ORCHESTRATOR is separate: open Claude Code, run `/loop agent autopilot`.
 
-autopilot:      ## hand-drain one task (what the /loop brain calls each cycle)
-	scion autopilot
+autopilot:      ## hand-drain one task (what the /loop orchestrator calls each cycle)
+	agent autopilot
+
+fleet:          ## list the agent roles this runtime can spawn
+	agent fleet roles
 
 clean:          ## remove runtime state (keeps your .env)
 	find workspace -mindepth 1 -not -name '.gitkeep' -delete

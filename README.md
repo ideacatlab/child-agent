@@ -1,123 +1,140 @@
-# scion 🌱
+# A self-rewriting, multi-agent runtime — driven by your Claude Code subscription
 
-**A self-improving generalist agent, driven by your Claude Code subscription — not the API.**
+**Not the API.** The brain — and every worker and the supervisor — is a `claude`
+process on your flat subscription. There is **no LLM API and no per-token cost**. The
+entire core runs on the Python standard library.
 
-scion is the durable infrastructure around a long-lived **Claude Code** session.
-You start that session once with a master prompt and the `/loop` skill; it then
-runs 24/7, draining a work queue, doing open-ended tasks with its native tools
-plus the `scion` CLI, replying to you on Telegram, and **building itself new
-tools, skills, knowledge, and memory** as it goes. Fork it and grow a specialist
-(a marketer, an SRE, a researcher) that gets better from real use.
+This is the durable infrastructure around a long-lived **Claude Code** session. You
+start that session once with a master prompt and the `/loop` skill; it then runs 24/7
+as an **orchestrator**: draining a work queue, doing tasks with its native tools plus
+the `agent` CLI, and — for larger work — **spawning a fleet of worker agents** it can
+write and improve. An always-on **supervisor** watches how every agent performs and
+rewrites the laggards. And nothing is fixed: the runtime **owns and rewrites its own
+core**, not just the tools around it.
 
-> **No API. No per-token cost.** The "brain" is the Claude Code session you're
-> already paying a flat subscription for. This is deliberate: harnesses that call
-> the Anthropic API (like OpenClaw) can get very expensive very fast. scion has
-> **zero LLM dependency** — the entire thing runs on the Python standard library.
-
-> *scion* (n.): a descendant of a notable line — and a living shoot cut for
-> grafting, so a new plant grows from an established root. A child of Claude that
-> grows new capabilities onto a stable core.
-
-This is the ali-fleet-recovery **"sentinel"** model — a real agent that's been
-running this way for a while — generalized into a template anyone can fork.
+It is **name-agnostic**: fork it per cohort of users and give that deployment an
+identity (`AGENT_NAME`). It takes full responsibility for performing the best it can
+for the people it serves.
 
 ---
 
 ## How it works
 
 ```
-  ┌── always-on, no LLM (the "sentinel", a daemon) ──┐
-  │  Telegram receiver  ──┐                            │
-  │  cron scheduler     ──┴──►  durable queue (SQLite) │
-  └──────────────────────────────────┬────────────────┘
-                                      │  (messages, scheduled work — nothing is lost)
-                                      ▼
-  ┌── the brain: ONE Claude Code session, looping 24/7 ──────────────┐
-  │  /loop  +  MASTER_PROMPT.md                                       │
-  │     every cycle:  `scion autopilot`  → claim & print next task    │
-  │                   do it (native tools + scion CLI) → reply → done │
-  │                   build tools/skills/knowledge → `scion publish`  │
-  └──────────────────────────────────────────────────────────────────┘
+  ┌── always-on daemon, no LLM ──────────────────────────────────┐
+  │  Telegram receiver ─┐                                          │
+  │  cron ticker ───────┼──►  durable queue (SQLite)              │
+  │  supervision tick ──┘     (nothing is lost across restarts)   │
+  └───────────────────────────────────┬──────────────────────────┘
+                                       │
+  ┌── ORCHESTRATOR: one Claude Code /loop session, 24/7 ──────────┐
+  │  /loop  +  MASTER_PROMPT.md                                    │
+  │   each cycle: `agent autopilot` → claim the next task          │
+  │     • do it directly, OR decompose & dispatch to workers       │
+  │     • write a new agent role when one is missing               │
+  │     • reply → close → improve tools/skills/agents/core         │
+  └───────────────┬───────────────────────────────▲──────────────┘
+       spawns      │ (headless `claude` processes)  │ improves
+                   ▼                                 │
+  ┌── WORKERS (agents/<role>/AGENT.md) ──┐          │
+  │  each a claude process with a role;   │          │
+  │  every run recorded in the fleet db   │──metrics─┤
+  └───────────────────────────────────────┘          │
+                                                      │
+  ┌── SUPERVISOR (always active) ──────────────────────┘
+  │  reads per-agent performance → rewrites the underperformers:
+  │  their charters, tools, skills — and the core itself.
+  └────────────────────────────────────────────────────────────
 ```
 
-- The **sentinel** is deterministic shell/Python that never blocks on the model —
-  it just fills the queue and acks "queued, working on it."
-- The **brain** is your Claude Code session. `/loop` re-invokes the master prompt
-  on a cadence; each cycle it calls `scion autopilot`, which hands it the next
-  task. It uses its *own* read/write/bash/web tools **plus** the `scion` CLI for
-  the durable bits (queue, Telegram, retrieval, memory, knowledge, publish).
+- The **daemon** is deterministic shell/Python that never blocks on the model — it just
+  fills the queue (and can fire periodic supervision).
+- The **orchestrator** is your Claude Code session. It dispatches focused subtasks to
+  **workers** (separate `claude` processes, each booted with a role charter), keeping
+  its own context for planning and integration.
+- The **supervisor** closes the loop: it turns *how agents actually performed* into
+  *changes that make them better*, including changes to the core.
 
 ---
 
 ## Quickstart
 
 ```bash
-# 1. install — no API key, no LLM SDK; core needs nothing
+# 1. install — no API key, no LLM SDK; core needs nothing. (`claude` CLI must be on PATH.)
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[recommended]"          # extras = PDF ingest, web, faster vectors
 
-# 2. (optional) configure Telegram + git in .env
-cp .env.example .env && $EDITOR .env      # there is NO API key to set
+# 2. (optional) configure identity + Telegram + git in .env
+cp .env.example .env && $EDITOR .env      # set AGENT_NAME; there is NO API key to set
 
-# 3. sanity check
-scion doctor
+# 3. sanity check (verifies the `claude` binary, agent roles, etc.)
+agent doctor
 
-# 4. start the always-on sentinel (Telegram receiver + cron). Leave it running.
-scion sentinel                            # or: scripts/run-sentinel.sh under systemd
+# 4. start the always-on daemon (Telegram + cron + supervision). Leave it running.
+agent daemon                              # or: scripts/run-daemon.sh under systemd
 
-# 5. start the brain: open Claude Code in this repo and run
-#       /loop scion autopilot
+# 5. start the orchestrator: open Claude Code in this repo and run
+#       /loop agent autopilot
 #    (it follows MASTER_PROMPT.md and drains the queue forever)
 ```
 
-Now feed it work from anywhere:
+Feed it work from anywhere — it picks it up on the next cycle:
 
 ```bash
-scion task add "draft a launch tweet for our v2 release"   # the loop picks it up
-# ...or just message the Telegram bot. The reply comes back in Telegram.
+agent task add "research our top 3 competitors and draft a one-pager each"
+# ...or message the Telegram bot. The reply comes back in Telegram.
 ```
 
-Give it documents to reason over (great for the "be my marketer" case):
+Drive the fleet directly:
 
 ```bash
-scion rag ingest ./client_docs --collection acme
-# then in a task: "Using the acme knowledge base, find their refund window."
+agent fleet roles                                   # what roles exist
+agent fleet run worker "summarize CHANGELOG.md"     # spawn one worker, get its result
+agent fleet new researcher --description "Deep web + KB research."   # write a new agent
+agent fleet metrics                                 # how each agent is performing
+agent fleet supervise                               # one improvement cycle
 ```
 
 ---
 
-## What scion gives you (and what Claude Code already has)
+## What it gives you (and what Claude Code already has)
 
-**Claude Code already provides** the brain, reading/writing files, running bash,
-web access, spawning subagents, and its own permission/sandbox model. scion does
-**not** re-implement any of that. scion adds the durable, agent-specific
-infrastructure a 24/7 self-improving agent needs, all as one CLI:
+**Claude Code already provides** the brain, file/bash/web tools, and a permission model
+— for the orchestrator *and* every spawned worker. This runtime does **not**
+re-implement that. It adds the durable, multi-agent, self-rewriting infrastructure, all
+as one CLI:
 
-| `scion …` | what it is |
+| `agent …` | what it is |
 |---|---|
 | `autopilot` | claim + print the next task — the `/loop` entrypoint |
-| `task add/next/done/fail/list/gc` | the durable work queue |
-| `tg send <chat> "…"` / `sentinel` | reply on Telegram / run the receiver+cron daemon |
-| `rag ingest/search/stats` | retrieval over your documents (PDF/MD/HTML/…), zero-dep hybrid search |
+| `fleet run/spawn/status/logs/metrics` | spawn worker agents, capture + measure every run |
+| `fleet new` | write a new agent role (`agents/<role>/AGENT.md`) |
+| `fleet supervise` | one supervision cycle: evaluate + rewrite the laggards |
+| `evolve checkpoint/diff/revert/log` | git-backed, unrestricted self-rewrite of the core |
+| `task add/done/fail/list/gc` | the durable work queue |
+| `tg send` / `daemon` | reply on Telegram / run the always-on receiver+cron+supervision |
+| `rag ingest/search` | retrieval over your documents (PDF/MD/HTML/…), zero-dep hybrid search |
 | `memory remember/search/journal/user` | persistent markdown memory + recall |
 | `know note/list` | a self-rendering knowledge registry (committed) |
-| `skill list/show` | on-demand playbooks (`SKILL.md`) |
-| `tool new/validate/approve/list` | the tool workshop — scaffold, screen, promote a new tool script |
+| `skill list/show` · `tool new/validate/approve` | on-demand playbooks + the tool workshop |
 | `publish commit/status` | commit + push the agent's growth (secret-guarded) |
-| `cron list/add-interval/add-daily` | scheduled work that lands on the queue |
+| `cron add-interval/add-daily` | scheduled work that lands on the queue |
 
 ---
 
-## The self-improvement loop
+## Self-improvement — at every level
 
-When the agent repeatedly needs a capability it doesn't have, it **writes itself a
-tool**: `scion tool new <name>` scaffolds a script, the agent implements it,
-`scion tool validate` screens it (syntax + structure + a `--help` smoke run), and
-`scion tool approve` promotes it into the version-controlled `authored_tools/`
-folder. When it works out a repeatable procedure, it writes a **skill**
-(`skills/<name>/SKILL.md`). Durable facts go to **memory**, findings to the
-**knowledge registry**. Then `scion publish commit "…"` ships all of it back to
-git. Capability compounds, and it's all reviewable and reversible.
+When the runtime hits a wall, it doesn't just cope — it changes itself:
+
+- a missing capability → **a tool** (`agent tool new`);
+- a recurring procedure → **a skill** (`skills/<name>/SKILL.md`);
+- a recurring kind of work → **a new agent** (`agent fleet new`);
+- a structural limitation → **a core rewrite** (`agent/`, the CLI — checkpoint with
+  `agent evolve`, verify, `agent publish`).
+
+Durable facts go to **memory**, findings to the **knowledge registry**. Everything is
+plain text, version-controlled, reviewable, and reversible. Capability compounds across
+cycles and across forks. See [`docs/self-improvement.md`](docs/self-improvement.md).
 
 ---
 
@@ -125,49 +142,56 @@ git. Capability compounds, and it's all reviewable and reversible.
 
 This repo is a **template** ("Use this template" on GitHub):
 
-1. Edit `workspace/SOUL.md` (who the agent is) and add domain **skills** under
-   `skills/` (an example, `competitor-research`, ships with it).
-2. Seed knowledge: `scion rag ingest ./domain_docs`.
-3. Run the sentinel + a Claude Code `/loop`, point your users at the Telegram bot,
-   and let it author tools, write skills, and record knowledge as it learns — then
-   publish so the improvements persist in *its* repo.
+1. Set `AGENT_NAME` and write `workspace/IDENTITY.md` (who this deployment is, who it
+   serves).
+2. Add domain **agents** under `agents/` and **skills** under `skills/`; seed knowledge
+   with `agent rag ingest ./domain_docs`.
+3. Run the daemon + a Claude Code `/loop`, point your users at the Telegram bot, and let
+   it author tools, write agents, record knowledge, and rewrite its own core as it
+   learns — then publish so the improvements persist in *its* repo.
 
 ---
 
 ## Safety
 
 - **Nothing to leak:** there's no API key in the loop. Secrets are masked out of
-  anything logged, and `scion publish` **hard-aborts if a secret got staged**.
-- **The operator stays in control:** `SCION_CONFIRM_DANGEROUS=1` tells the agent
-  (via the master prompt) to ask before destructive or outward-facing actions
-  (git push, sending things). Claude Code's own permission prompts apply to
-  bash/file actions on top of that.
-- **The tool gate:** a tool script is screened and smoke-tested before
-  `scion tool approve` will promote it.
+  anything logged, and `agent publish` **hard-aborts if a secret got staged**.
+- **The operator stays in control:** `AGENT_CONFIRM_DANGEROUS=1` tells the agent to ask
+  before destructive or outward-facing actions. Claude Code's own permission prompts
+  apply on top.
+- **Workers are autonomous by default** (`AGENT_FLEET_PERMISSION_MODE=bypassPermissions`)
+  so the fleet runs unattended — dial this down per cohort if you want tighter control.
+- **Self-rewrite is git-backed:** `agent evolve checkpoint` before deep changes;
+  `agent evolve revert` to recover.
 
 ---
 
 ## Project layout
 
 ```
-MASTER_PROMPT.md   the brain: what you give to `/loop` (the agent can edit it)
-scion/             the package (pure stdlib)
-  cli.py           the `scion` command (the brain's infrastructure surface)
+MASTER_PROMPT.md   the orchestrator's contract — what you give to `/loop`
+agent/             the package (pure stdlib)
+  cli.py           the `agent` command
+  fleet/           spawn workers (runner), agent registry, run metrics, orchestrate, supervise
+  evolve/          git-backed self-rewrite (checkpoint/diff/revert/log)
   queue/           durable SQLite task queue
   channels/        Telegram receiver + sender (urllib, zero-dep)
-  scheduler/       cron + the sentinel supervisor
+  scheduler/       cron + the always-on daemon
   rag/             loaders → chunkers → embeddings → store → hybrid retrieve
-  memory/          markdown files + Letta-style core-memory blocks
+  memory/          markdown files (IDENTITY/USER/MEMORY) + core-memory blocks
   tools/           the tool workshop (scaffold/validate/promote scripts)
   publish/         git self-publish (secret-guarded)
   knowledge.py     the self-rendering knowledge registry
+agents/            committed agent-role charters (worker, supervisor, + your own)
 authored_tools/    tools the agent wrote (committed)
 knowledge/         the knowledge registry (committed)
 skills/            SKILL.md playbooks (committed)
-workspace/         private runtime state (gitignored): dbs, memory, logs
+workspace/         private runtime state (gitignored): dbs, memory, run logs
 ```
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design rationale and the full
-"what was inherited from where" matrix, and [`docs/`](docs/) for the how-to guides.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design rationale and
+[`docs/`](docs/) for the how-to guides ([fleet](docs/fleet.md),
+[self-improvement](docs/self-improvement.md), [deployment](docs/deployment.md),
+[RAG](docs/rag.md), [Telegram](docs/telegram.md)).
 
-MIT licensed. Built to be forked.
+MIT licensed. Built to be forked — and to rewrite itself.
